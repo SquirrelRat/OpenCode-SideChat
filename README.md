@@ -1,13 +1,22 @@
-# OpenCode SideChat
+# OpenCode-SideChat
+
+[![npm](https://img.shields.io/npm/v/opencode-sidechat)](https://www.npmjs.com/package/opencode-sidechat)
 
 Floating side-chat panel for quick queries while your main session runs. Opens at the bottom-right corner of the TUI via `Alt+N`. Uses a separate agent with read-only tools and no access to main-session context.
 
+https://github.com/user-attachments/assets/d4581f3d-a172-438e-9566-0ae3b40899e4
+
 ## Install
 
-Add the path to your `~/.config/opencode/tui.json`:
+```sh
+npm install -g opencode-sidechat
+```
+or
+
+Add directly to your `~/.config/opencode/tui.json`:
 
 ```json
-["E:/CodeProjects/opencode-sidechat"]
+["opencode-sidechat"]
 ```
 
 On first launch, the plugin creates `~/.config/opencode/sidechat.jsonc` with defaults. Edit that file to change settings.
