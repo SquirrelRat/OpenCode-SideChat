@@ -1,7 +1,14 @@
 {
   "name": "opencode-sidechat",
-  "version": "0.1.0",
+  "version": "1.0.0",
+  "description": "Floating side-chat panel for quick queries alongside your main opencode session",
   "type": "module",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/SquirrelRat/OpenCode-SideChat.git"
+  },
+  "author": "SquirrelRat",
+  "license": "MIT",
   "exports": {
     "./tui": "./src/index.tsx"
   },
@@ -12,8 +19,8 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@opencode-ai/plugin": "1.14.48",
-    "@opencode-ai/sdk": "1.14.48",
+    "@opencode-ai/plugin": ">=1.14.48",
+    "@opencode-ai/sdk": ">=1.14.48",
     "@opentui/core": "^0.2.6",
     "@opentui/keymap": "^0.2.6",
     "@opentui/solid": "^0.2.6",
