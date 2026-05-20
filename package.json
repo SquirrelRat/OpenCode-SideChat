@@ -1,6 +1,6 @@
 {
   "name": "opencode-sidechat",
-  "version": "1.2.0",
+  "version": "1.2.1",
   "description": "Floating side-chat panel for OpenCode — history persistence, inline tool calls, clickable UI, and configurable alignment",
   "type": "module",
   "repository": {

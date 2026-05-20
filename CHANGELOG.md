@@ -1,5 +1,10 @@
 # Changelog
 
+## [1.2.1] — 2026-05-20
+
+### Fixed
+- Session cleanup reverted — keep session alive across toggle close so conversation persists; session only destroyed on explicit `Alt+C` or plugin dispose. OpenCode SDK has no hidden session API, so side sessions appear in the global sessions list while the panel is open (cleaned up on clear/dispose).
+
 ## [1.2.0] — 2026-05-20
 
 ### Added
