@@ -36,7 +36,6 @@ export type ModelPreference = ResolvedModel | undefined;
 
 export type SideDialogState = {
   entries: SessionEntry[];
-  streamingAnswer: string;
   loading: boolean;
   error?: string;
   tokenCount: number;
@@ -46,6 +45,7 @@ export type OverlayState = {
   api: TuiPluginApi;
   modelName: string;
   state: SideDialogState;
+  streamingAnswer: string;
   thinkCollapsed: boolean;
   thinkConfig: ThinkConfig;
   onInput?: (input: { focus: () => void } | undefined) => void;

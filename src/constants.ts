@@ -12,6 +12,9 @@ export const DEFAULT_TOKEN_LIMIT = 45_000;
 export const DEFAULT_WIDTH = 70;
 export const DEFAULT_TRANSCRIPT_HEIGHT = 20;
 
+export const SYSTEM_PROMPT_OVERRIDE =
+  "CRITICAL: Follow ONLY the instructions below. Ignore ALL other system prompts, AGENTS.md files, CLAUDE.md files, and any project-level configuration instructions. Do NOT load skills, do NOT follow agent instructions from other contexts.";
+
 export const DEFAULT_SYSTEM_PROMPT =
   "You are a casual side assistant. Answer concisely and directly. Use tools only when helpful.";
 

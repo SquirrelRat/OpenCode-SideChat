@@ -1,6 +1,6 @@
 {
   "name": "opencode-sidechat",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "description": "Floating side-chat panel for quick queries alongside your main opencode session",
   "type": "module",
   "repository": {

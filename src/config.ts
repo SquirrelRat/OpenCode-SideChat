@@ -48,8 +48,13 @@ function stripJsoncComments(text: string): string {
         continue;
       } else if (ch === "/" && i + 1 < text.length && text[i + 1] === "*") {
         i += 2;
-        while (i + 1 < text.length && !(text[i] === "*" && text[i + 1] === "/")) i += 1;
-        i += 2;
+        let found = false;
+        while (i + 1 < text.length) {
+          if (text[i] === "*" && text[i + 1] === "/") { found = true; break; }
+          i += 1;
+        }
+        if (found) i += 2;
+        else i = text.length;
         continue;
       } else {
         result += ch;

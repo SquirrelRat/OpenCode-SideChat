@@ -1,6 +1,6 @@
 import type { TuiPluginApi, TuiDialogSelectOption } from "@opencode-ai/plugin/tui";
 import type { PermissionRuleset } from "@opencode-ai/sdk/v2";
-import { DEFAULT_ALLOWED_TOOLS, ADDITIONAL_PERMISSION_IDS } from "./constants";
+import { DEFAULT_ALLOWED_TOOLS, ADDITIONAL_PERMISSION_IDS, SYSTEM_PROMPT_OVERRIDE } from "./constants";
 import type { SideConfig, SessionEntry, ResolvedModel, ModelPreference } from "./types";
 
 export type ModelSource = "config" | "session" | "unknown";
@@ -24,25 +24,23 @@ export function resolveModel(
 
   for (let index = entries.length - 1; index >= 0; index -= 1) {
     const { info } = entries[index];
-    if (info.role === "user") {
+    if (info.role === "user" && info.model) {
       return {
         model: {
           model: {
             providerID: info.model.providerID,
             modelID: info.model.modelID,
           },
-          variant: info.model.variant,
         },
         source: "session",
       };
     }
-    if (!assistantFallback) {
+    if (info.role === "assistant" && info.providerID && info.modelID && !assistantFallback) {
       assistantFallback = {
         model: {
           providerID: info.providerID,
           modelID: info.modelID,
         },
-        variant: info.variant,
       };
     }
   }
@@ -128,11 +126,10 @@ export function buildPermissionRules(
 }
 
 export function buildSideSystemPrompt(systemPrompt: string, allowedTools: string[]) {
-  if (allowedTools.length === 0) {
-    return `${systemPrompt} No tools are available.`;
-  }
-
-  return `${systemPrompt} Available tools: ${allowedTools.join(", ")}.`;
+  const toolsNote = allowedTools.length === 0
+    ? "No tools are available."
+    : `Available tools: ${allowedTools.join(", ")}.`;
+  return `${SYSTEM_PROMPT_OVERRIDE}\n\n${systemPrompt} ${toolsNote}`;
 }
 
 export function openModelPicker(
@@ -187,7 +184,13 @@ function buildModelOptions(
 ): TuiDialogSelectOption<
   { type: "default" } | { type: "model"; model: NonNullable<ResolvedModel["model"]>; variant?: string }
 >[] {
-  const providers = [...api.state.provider].sort((left, right) =>
+  const providers = api.state.provider ? [...api.state.provider] : [];
+  if (providers.length === 0) {
+    api.ui.toast({ variant: "error", message: "No model providers available." });
+    api.ui.dialog.clear();
+    return [];
+  }
+  providers.sort((left, right) =>
     left.name.localeCompare(right.name),
   );
 

@@ -1,6 +1,6 @@
 /** @jsxImportSource @opentui/solid */
 import type { TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui";
-import { createSignal, Show } from "solid-js";
+import { createSignal, Show, ErrorBoundary } from "solid-js";
 import { loadConfig } from "./config";
 import { SideChat } from "./components/SideChat";
 import {
@@ -23,7 +23,7 @@ import {
 } from "./session";
 import type { SideDialogState, ModelPreference } from "./types";
 
-const SIDE_AGENT = "general";
+const PROMPT_TIMEOUT_MS = 120_000;
 
 const tui: TuiPlugin = async (api, _options) => {
   const config = loadConfig();
@@ -33,11 +33,11 @@ const tui: TuiPlugin = async (api, _options) => {
 
   const [state, setState] = createSignal<SideDialogState>({
     entries: [],
-    streamingAnswer: "",
     loading: false,
     error: undefined,
     tokenCount: 0,
-  }, { equals: false });
+  });
+  const [streamingAnswer, setStreamingAnswer] = createSignal("", { equals: false });
 
   const [tempSessionID, setTempSessionID] = createSignal<string | undefined>(undefined);
   const [selectedModel, setSelectedModel] = createSignal<ModelPreference>(undefined);
@@ -45,8 +45,11 @@ const tui: TuiPlugin = async (api, _options) => {
   const [thinkCollapsed, setThinkCollapsed] = createSignal(config.think.defaultState === "collapsed");
 
   let overlayInput: { focus: () => void } | undefined;
+  let previousFocus: import("@opentui/core").Renderable | null = null;
   let unsubscribers: Array<() => void> = [];
   let sessionInitPromise: Promise<string | undefined> | undefined;
+  let promptTimeout: ReturnType<typeof setTimeout> | undefined;
+  let cachedToolIDs: string[] | undefined;
 
   const getModelName = () =>
     formatPreference(
@@ -55,7 +58,7 @@ const tui: TuiPlugin = async (api, _options) => {
 
   const clearListeners = () => {
     while (unsubscribers.length > 0) {
-      try { unsubscribers.pop()?.(); } catch {}
+      try { unsubscribers.pop()?.(); } catch (err) { console.error("[SideChat] listener cleanup:", err); }
     }
   };
 
@@ -67,17 +70,23 @@ const tui: TuiPlugin = async (api, _options) => {
       const entries: SideDialogState["entries"] = [];
       let tokenCount = 0;
       for (const info of messages) {
-        entries.push({ info, parts: [...api.state.part(info.id)] });
-        if (info.role === "assistant") {
-          tokenCount += (info.tokens?.input ?? 0) + (info.tokens?.output ?? 0);
+        entries.push({ info, parts: [...(api.state.part(info.id) ?? [])] });
+        if ("tokens" in info && info.tokens) {
+          tokenCount += (info.tokens.input ?? 0) + (info.tokens.output ?? 0);
         }
       }
-      setState((s) => ({ ...s, entries, tokenCount }));
-    } catch {}
+      const MAX_STORED_ENTRIES = 100;
+      setState((s) => ({ ...s, entries: entries.slice(-MAX_STORED_ENTRIES), tokenCount }));
+    } catch (err) {
+      console.error("[SideChat] refreshSession failed:", err);
+    }
   };
 
   const buildSystemPrompt = async () => {
-    const toolIDs = await getAvailableToolIDs(api);
+    if (!cachedToolIDs) {
+      cachedToolIDs = await getAvailableToolIDs(api);
+    }
+    const toolIDs = cachedToolIDs;
     const resolvedTools = resolveAllowedTools(config.allowedTools, toolIDs);
     return {
       system: buildSideSystemPrompt(config.systemPrompt, resolvedTools),
@@ -98,7 +107,6 @@ const tui: TuiPlugin = async (api, _options) => {
         {
           title: "side chat",
           directory: api.state.path.directory,
-          agent: SIDE_AGENT,
           permission,
         },
         { throwOnError: true },
@@ -110,12 +118,13 @@ const tui: TuiPlugin = async (api, _options) => {
       unsubscribers.push(
         api.event.on("session.idle", (event) => {
           if (event.properties.sessionID !== sid) return;
+          if (promptTimeout) { clearTimeout(promptTimeout); promptTimeout = undefined; }
           refreshSession();
           setState((s) => ({
             ...s,
             loading: false,
-            streamingAnswer: "",
           }));
+          setStreamingAnswer("");
         }),
       );
 
@@ -130,12 +139,10 @@ const tui: TuiPlugin = async (api, _options) => {
         api.event.on("message.part.delta", (event) => {
           if (
             event.properties.sessionID !== sid ||
-            event.properties.field !== "text"
+            event.properties.field !== "text" ||
+            !state().loading
           ) return;
-          setState((s) => ({
-            ...s,
-            streamingAnswer: s.streamingAnswer + event.properties.delta,
-          }));
+          setStreamingAnswer((prev) => prev + event.properties.delta);
         }),
       );
 
@@ -149,6 +156,7 @@ const tui: TuiPlugin = async (api, _options) => {
       unsubscribers.push(
         api.event.on("session.error", (event) => {
           if (event.properties.sessionID !== sid) return;
+          if (promptTimeout) { clearTimeout(promptTimeout); promptTimeout = undefined; }
           setState((s) => ({
             ...s,
             error: getErrorMessage(event.properties.error),
@@ -157,11 +165,12 @@ const tui: TuiPlugin = async (api, _options) => {
         }),
       );
 
-      setState((s) => ({ ...s, sessionReady: true, error: undefined }));
+      setState((s) => ({ ...s, error: undefined }));
       return sid;
     } catch (cause) {
       const msg = getErrorMessage(cause);
-      setState((s) => ({ ...s, error: msg, sessionReady: false }));
+      setState((s) => ({ ...s, error: msg }));
+      sessionInitPromise = undefined;
       return undefined;
     }
   };
@@ -182,17 +191,29 @@ const tui: TuiPlugin = async (api, _options) => {
         { sessionID: sid },
         { throwOnError: true },
       );
-    } catch {}
+    } catch (err) { console.error("[SideChat] session abort:", err); }
     try {
       await api.client.session.delete(
         { sessionID: sid },
         { throwOnError: true },
       );
-    } catch {}
+    } catch (err) { console.error("[SideChat] session delete:", err); }
   };
 
   const handleSubmit = (text: string): boolean => {
     if (state().loading) return false;
+
+    setState((s) => ({
+      ...s,
+      error: undefined,
+      loading: true,
+    }));
+    setStreamingAnswer("");
+
+    if (promptTimeout) clearTimeout(promptTimeout);
+    promptTimeout = setTimeout(() => {
+      setState((s) => s.loading ? { ...s, loading: false, error: "Request timed out." } : s);
+    }, PROMPT_TIMEOUT_MS);
 
     void ensureSession().then((sid) => {
       if (!sid) {
@@ -203,13 +224,6 @@ const tui: TuiPlugin = async (api, _options) => {
         }));
         return;
       }
-
-      setState((s) => ({
-        ...s,
-        error: undefined,
-        loading: true,
-        streamingAnswer: "",
-      }));
 
       void (async () => {
         try {
@@ -222,7 +236,6 @@ const tui: TuiPlugin = async (api, _options) => {
             {
               sessionID: sid,
               system,
-              agent: SIDE_AGENT,
               tools,
               parts: [{ type: "text", text }],
               ...(resolved.model ? { model: resolved.model } : {}),
@@ -247,25 +260,36 @@ const tui: TuiPlugin = async (api, _options) => {
     await destroySession();
     setState({
       entries: [],
-      streamingAnswer: "",
       loading: false,
       error: undefined,
       tokenCount: 0,
     });
+    setStreamingAnswer("");
     sessionInitPromise = undefined;
     setThinkCollapsed(config.think.defaultState === "collapsed");
     await ensureSession();
-    setVisible(true);
-    setTimeout(() => overlayInput?.focus(), 0);
+    if (visible()) {
+      setTimeout(() => overlayInput?.focus(), 0);
+    }
   };
 
   const handleToggle = () => {
     const currentRoute = api.route.current;
-    if (currentRoute.name !== "session") return;
-    setVisible((prev) => {
-      if (!prev) setTimeout(() => overlayInput?.focus(), 0);
-      return !prev;
-    });
+    if (currentRoute.name !== "session" && !visible()) return;
+    const wasVisible = visible();
+    if (!wasVisible) {
+      previousFocus = api.renderer.currentFocusedRenderable;
+    }
+    setVisible(!wasVisible);
+    if (wasVisible && previousFocus) {
+      const restore = previousFocus;
+      previousFocus = null;
+      setTimeout(() => {
+        try { restore.focus(); } catch {}
+      }, 50);
+    } else if (!wasVisible) {
+      setTimeout(() => overlayInput?.focus(), 50);
+    }
   };
 
   const handleToggleThink = () => {
@@ -289,19 +313,22 @@ const tui: TuiPlugin = async (api, _options) => {
     slots: {
       app: () => (
         <Show when={visible()}>
-          <SideChat
-            api={api}
-            modelName={getModelName()}
-            state={state()}
-            width={config.width}
-            transcriptHeight={config.transcriptHeight}
-            tokenLimit={config.tokenLimit}
-            thinkCollapsed={thinkCollapsed()}
-            thinkConfig={config.think}
-            onInput={(node) => { overlayInput = node; }}
-            onChangeModel={handleChangeModel}
-            onSubmit={handleSubmit}
-          />
+          <ErrorBoundary fallback={(err) => <text>{String(err)}</text>}>
+            <SideChat
+              api={api}
+              modelName={getModelName()}
+              state={state()}
+              streamingAnswer={streamingAnswer()}
+              width={config.width}
+              transcriptHeight={config.transcriptHeight}
+              tokenLimit={config.tokenLimit}
+              thinkCollapsed={thinkCollapsed()}
+              thinkConfig={config.think}
+              onInput={(node) => { overlayInput = node; }}
+              onChangeModel={handleChangeModel}
+              onSubmit={handleSubmit}
+            />
+          </ErrorBoundary>
         </Show>
       ),
     },
@@ -316,7 +343,7 @@ const tui: TuiPlugin = async (api, _options) => {
         desc: "Open/side chat overlay",
         category: "Plugin",
         slashName: "side",
-        enabled: () => api.route.current.name === "session",
+        enabled: () => api.route.current.name === "session" || visible(),
         run: () => handleToggle(),
       },
       {

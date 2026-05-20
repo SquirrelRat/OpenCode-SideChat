@@ -104,8 +104,8 @@ export function SideChat(props: OverlayState & { width: number; transcriptHeight
       .filter((m): m is NonNullable<typeof m> => m !== null)
       .slice(-MAX_VISIBLE_MESSAGES);
 
-    if (props.state.loading && props.state.streamingAnswer) {
-      const streaming = props.state.streamingAnswer.trim();
+    if (props.state.loading && props.streamingAnswer) {
+      const streaming = props.streamingAnswer.trim();
       const last = messages[messages.length - 1];
       const lastText = last?.role === "assistant" ? last.text : "";
       if (streaming && streaming !== lastText) {
@@ -178,7 +178,7 @@ export function SideChat(props: OverlayState & { width: number; transcriptHeight
           <box flexDirection="row" gap={1} alignItems="center">
             <box paddingLeft={1} paddingRight={1} backgroundColor={theme.accent}>
               <text fg={theme.background}>
-                <b>{"SideChat"}</b>
+                <b>{"OpenCode-SideChat"}</b>
               </text>
             </box>
             <text fg={theme.success}>
