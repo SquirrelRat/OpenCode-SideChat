@@ -16,6 +16,7 @@ export type SideConfig = {
   allowedTools: string[] | null;
   width: number;
   transcriptHeight: number;
+  position: string;
   think: ThinkConfig;
 };
 
@@ -34,6 +35,29 @@ export type ResolvedModel = {
 
 export type ModelPreference = ResolvedModel | undefined;
 
+export type HistoryToolCall = {
+  tool: string;
+  title?: string;
+  status: string;
+  duration?: number;
+};
+
+export type HistoryMessage = {
+  role: "user" | "assistant";
+  text: string;
+  reasoning?: Array<{ id: string; text: string }>;
+  tools?: HistoryToolCall[];
+};
+
+export type HistoryEntry = {
+  id: string;
+  created: number;
+  updated: number;
+  model: string;
+  title: string;
+  messages: HistoryMessage[];
+};
+
 export type SideDialogState = {
   entries: SessionEntry[];
   loading: boolean;
@@ -51,7 +75,18 @@ export type OverlayState = {
   keybind: string | false;
   clearKeybind: string | false;
   thinkToggleKeybind: string | false;
+  historyKeybind: string;
+  deleteKeybind: string;
+  position: string;
   onInput?: (input: { focus: () => void } | undefined) => void;
   onChangeModel: () => void;
   onSubmit: (value: string) => boolean;
+  historyMode: boolean;
+  historyEntries: HistoryEntry[];
+  selectedHistoryId?: string;
+  onToggleHistory: () => void;
+  onSelectHistoryEntry: (id: string | undefined) => void;
+  onDeleteHistoryEntry: (id: string) => void;
+  onClear: () => void;
+  onToggleThink: () => void;
 };

@@ -8,8 +8,14 @@ import {
   CMD_CLEAR,
   CMD_CHANGE_MODEL,
   CMD_TOGGLE_THINK,
+  CMD_TOGGLE_HISTORY,
+  CMD_DELETE,
+  DEFAULT_HISTORY_KEYBIND,
+  DEFAULT_DELETE_KEYBIND,
+  DEFAULT_POSITION,
   PLUGIN_ID,
 } from "./constants";
+import { loadHistory, saveEntry, deleteEntry, buildHistoryEntry } from "./history";
 import {
   getAvailableToolIDs,
   resolveAllowedTools,
@@ -21,7 +27,7 @@ import {
   openModelPicker,
   getErrorMessage,
 } from "./session";
-import type { SideDialogState, ModelPreference } from "./types";
+import type { SideDialogState, ModelPreference, HistoryEntry } from "./types";
 
 const PROMPT_TIMEOUT_MS = 120_000;
 
@@ -44,10 +50,15 @@ const tui: TuiPlugin = async (api, _options) => {
   const [visible, setVisible] = createSignal(false);
   const [thinkCollapsed, setThinkCollapsed] = createSignal(config.think.defaultState === "collapsed");
 
+  const [historyMode, setHistoryMode] = createSignal(false);
+  const [historyEntries, setHistoryEntries] = createSignal<HistoryEntry[]>([]);
+  const [selectedHistoryId, setSelectedHistoryId] = createSignal<string | undefined>(undefined);
+
   let overlayInput: { focus: () => void } | undefined;
   let previousFocus: import("@opentui/core").Renderable | null = null;
   let unsubscribers: Array<() => void> = [];
   let sessionInitPromise: Promise<string | undefined> | undefined;
+  let clearing = false;
   let promptTimeout: ReturnType<typeof setTimeout> | undefined;
   let cachedToolIDs: string[] | undefined;
   let cachedPromptResult:
@@ -190,6 +201,7 @@ const tui: TuiPlugin = async (api, _options) => {
     const sid = tempSessionID();
     if (!sid) return;
     setTempSessionID(undefined);
+    sessionInitPromise = undefined;
     clearListeners();
     try {
       await api.client.session.abort(
@@ -262,23 +274,33 @@ const tui: TuiPlugin = async (api, _options) => {
   };
 
   const handleClear = async () => {
-    await destroySession();
-    setState({
-      entries: [],
-      loading: false,
-      error: undefined,
-      tokenCount: 0,
-    });
-    setStreamingAnswer("");
-    sessionInitPromise = undefined;
-    setThinkCollapsed(config.think.defaultState === "collapsed");
-    await ensureSession();
-    if (visible()) {
-      setTimeout(() => overlayInput?.focus(), 0);
+    if (clearing) return;
+    clearing = true;
+    try {
+      const entry = buildHistoryEntry(state(), getModelName());
+      if (entry) await saveEntry(entry);
+      await destroySession();
+      setState({
+        entries: [],
+        loading: false,
+        error: undefined,
+        tokenCount: 0,
+      });
+      setStreamingAnswer("");
+      sessionInitPromise = undefined;
+      cachedToolIDs = undefined;
+      cachedPromptResult = undefined;
+      setThinkCollapsed(config.think.defaultState === "collapsed");
+      await ensureSession();
+      if (visible()) {
+        setTimeout(() => overlayInput?.focus(), 0);
+      }
+    } finally {
+      clearing = false;
     }
   };
 
-  const handleToggle = () => {
+  const handleToggle = async () => {
     const currentRoute = api.route.current;
     if (currentRoute.name !== "session" && !visible()) return;
     const wasVisible = visible();
@@ -286,6 +308,10 @@ const tui: TuiPlugin = async (api, _options) => {
       previousFocus = api.renderer.currentFocusedRenderable;
     }
     setVisible(!wasVisible);
+    if (wasVisible && state().entries.length > 0) {
+      const entry = buildHistoryEntry(state(), getModelName());
+      if (entry) await saveEntry(entry);
+    }
     if (wasVisible && previousFocus) {
       const restore = previousFocus;
       previousFocus = null;
@@ -301,6 +327,27 @@ const tui: TuiPlugin = async (api, _options) => {
     setThinkCollapsed((prev) => !prev);
   };
 
+  const handleToggleHistory = async () => {
+    const next = !historyMode();
+    if (next) {
+      setHistoryEntries(await loadHistory());
+      setSelectedHistoryId(undefined);
+    }
+    setHistoryMode(next);
+  };
+
+  const handleSelectHistoryEntry = (id: string | undefined) => {
+    setSelectedHistoryId(id);
+  };
+
+  const handleDeleteHistoryEntry = async (id: string) => {
+    await deleteEntry(id);
+    setHistoryEntries(await loadHistory());
+    if (selectedHistoryId() === id) {
+      setSelectedHistoryId(undefined);
+    }
+  };
+
   const handleChangeModel = () => {
     const currentRoute = api.route.current;
     if (currentRoute.name !== "session") return;
@@ -309,8 +356,10 @@ const tui: TuiPlugin = async (api, _options) => {
     });
   };
 
-  api.lifecycle.onDispose(() => {
+  api.lifecycle.onDispose(async () => {
     clearListeners();
+    const entry = buildHistoryEntry(state(), getModelName());
+    if (entry) await saveEntry(entry);
     void destroySession();
   });
 
@@ -332,9 +381,20 @@ const tui: TuiPlugin = async (api, _options) => {
               keybind={config.keybind}
               clearKeybind={config.clearKeybind}
               thinkToggleKeybind={config.thinkToggleKeybind}
+              historyKeybind={DEFAULT_HISTORY_KEYBIND}
+              deleteKeybind={DEFAULT_DELETE_KEYBIND}
+              position={config.position}
               onInput={(node) => { overlayInput = node; }}
               onChangeModel={handleChangeModel}
               onSubmit={handleSubmit}
+              onClear={() => void handleClear()}
+              onToggleThink={handleToggleThink}
+              historyMode={historyMode()}
+              historyEntries={historyEntries()}
+              selectedHistoryId={selectedHistoryId()}
+              onToggleHistory={handleToggleHistory}
+              onSelectHistoryEntry={handleSelectHistoryEntry}
+              onDeleteHistoryEntry={handleDeleteHistoryEntry}
             />
           </ErrorBoundary>
         </Show>
@@ -374,6 +434,16 @@ const tui: TuiPlugin = async (api, _options) => {
         enabled: () => api.route.current.name === "session",
         run: () => handleChangeModel(),
       },
+      {
+        namespace: "palette",
+        name: CMD_TOGGLE_HISTORY,
+        title: "side history",
+        desc: "View side chat history",
+        category: "Plugin",
+        slashName: "side-history",
+        enabled: () => api.route.current.name === "session" || visible(),
+        run: () => handleToggleHistory(),
+      },
     ],
     bindings: [
       ...(keybind !== false
@@ -383,6 +453,11 @@ const tui: TuiPlugin = async (api, _options) => {
             desc: "Toggle side chat",
           }]
         : []),
+      {
+        key: DEFAULT_HISTORY_KEYBIND,
+        cmd: CMD_TOGGLE_HISTORY,
+        desc: "Toggle side chat history",
+      },
     ],
   });
 
@@ -393,6 +468,8 @@ const tui: TuiPlugin = async (api, _options) => {
       { name: CMD_CLEAR, run: () => void handleClear() },
       { name: CMD_CHANGE_MODEL, run: () => handleChangeModel() },
       { name: CMD_TOGGLE_THINK, run: () => handleToggleThink() },
+      { name: CMD_TOGGLE_HISTORY, run: () => handleToggleHistory() },
+      { name: CMD_DELETE, run: () => { if (selectedHistoryId()) handleDeleteHistoryEntry(selectedHistoryId()!); } },
     ],
     bindings: [
       ...(clearKeybind !== false
@@ -402,6 +479,11 @@ const tui: TuiPlugin = async (api, _options) => {
         ? [{ key: thinkToggleKeybind, cmd: CMD_TOGGLE_THINK }]
         : []),
       { key: "tab", cmd: CMD_CHANGE_MODEL },
+      {
+        key: DEFAULT_DELETE_KEYBIND,
+        cmd: CMD_DELETE,
+        desc: "Delete history entry",
+      },
     ],
   });
 };

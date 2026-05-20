@@ -9,6 +9,7 @@ import {
   DEFAULT_THINK_TOGGLE_KEYBIND,
   DEFAULT_WIDTH,
   DEFAULT_TRANSCRIPT_HEIGHT,
+  DEFAULT_POSITION,
   DEFAULT_SYSTEM_PROMPT,
 } from "./constants";
 import type { SideConfig, ThinkConfig } from "./types";
@@ -109,7 +110,7 @@ function generateDefaultConfig(): string {
   const defaultAllowedTools = JSON.stringify(DEFAULT_ALLOWED_TOOLS);
   return `{
   // OpenCode SideChat Configuration
-  "model": "opencode/deepseek-v4-flash-free",
+  "model": null,
   "systemPrompt": ${JSON.stringify(DEFAULT_SYSTEM_PROMPT)},
   "keybind": "alt+n",
   "clearKeybind": "alt+c",
@@ -121,7 +122,8 @@ function generateDefaultConfig(): string {
   "think": {
     "defaultState": "collapsed",
     "showSummary": false
-  }
+  },
+  "position": "bottom-right"
 }
 `;
 }
@@ -160,6 +162,7 @@ export function loadConfig(): SideConfig {
     allowedTools: parseAllowedTools(raw.allowedTools),
     width: parsePositiveNumber(raw.width, DEFAULT_WIDTH),
     transcriptHeight: parsePositiveNumber(raw.transcriptHeight, DEFAULT_TRANSCRIPT_HEIGHT),
+    position: parseString(raw.position, DEFAULT_POSITION),
     think: parseThinkConfig(raw.think),
   };
 }

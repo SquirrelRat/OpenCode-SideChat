@@ -91,7 +91,9 @@ export async function getAvailableToolIDs(api: TuiPluginApi): Promise<string[]> 
     ) {
       return result.data;
     }
-  } catch {}
+  } catch (err) {
+    console.warn("[SideChat] getAvailableToolIDs failed:", err);
+  }
 
   return DEFAULT_ALLOWED_TOOLS;
 }
