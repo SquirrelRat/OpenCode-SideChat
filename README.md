@@ -4,6 +4,8 @@ Floating side-chat panel for quick queries while your main session runs.
 Opens at the configured position (default bottom-right) via `Alt+N`. Uses a separate
 agent with read-only tools and no access to main-session context.
 
+https://github.com/user-attachments/assets/9c27927e-6d53-487c-a87e-8912d89b3461
+
 ## Install
 
 ```bash
