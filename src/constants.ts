@@ -9,16 +9,21 @@ export const CMD_CHANGE_MODEL = "sidechat.change-model";
 export const CMD_TOGGLE_THINK = "sidechat.toggle-think";
 export const CMD_TOGGLE_HISTORY = "sidechat.history";
 export const CMD_DELETE = "sidechat.delete";
+export const CMD_STOP = "sidechat.stop-generation";
+export const CMD_HISTORY_UP = "sidechat.history-up";
+export const CMD_HISTORY_DOWN = "sidechat.history-down";
+export const CMD_HISTORY_SELECT = "sidechat.history-select";
+export const CMD_RELOAD_CONFIG = "sidechat.reload-config";
 
 export const DEFAULT_KEYBIND = "alt+n";
 export const DEFAULT_CLEAR_KEYBIND = "alt+c";
 export const DEFAULT_THINK_TOGGLE_KEYBIND = "alt+t";
 export const DEFAULT_HISTORY_KEYBIND = "alt+h";
 export const DEFAULT_DELETE_KEYBIND = "alt+d";
+export const DEFAULT_MODEL_KEYBIND = "tab";
 export const DEFAULT_POSITION = "bottom-right";
 export const DEFAULT_TOKEN_LIMIT = 45_000;
 export const DEFAULT_WIDTH = 70;
-export const DEFAULT_TRANSCRIPT_HEIGHT = 20;
 
 export const HISTORY_DIR = path.join(os.homedir(), ".local", "share", "opencode-sidechat");
 export const HISTORY_FILE = path.join(HISTORY_DIR, "history.json");

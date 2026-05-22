@@ -1,5 +1,43 @@
 # Changelog
 
+## [1.3.0] — 2026-05-22
+
+### Added
+- Configurable keybinds for history toggle, delete, and model switch — `historyKeybind`, `deleteKeybind`, `modelKeybind` in `sidechat.jsonc`
+- Stop generation — Escape keybind aborts streaming; stop button shown in footer when loading
+- Arrow key (up/down) navigation for history list — wraps around; Space/Enter selects focused entry
+- Delete confirmation — double-press within 3s; footer shows "Confirm delete"
+- Config hot-reload — `side reload` palette command (`/side-reload`) reloads all config values
+- History entry validation on load — corrupted entries silently skipped with console warning
+- Shared `extractParts()` utility — deduplicated Part parsing across modules
+- New internal commands: `CMD_STOP`, `CMD_HISTORY_UP`, `CMD_HISTORY_DOWN`, `CMD_HISTORY_SELECT`, `CMD_RELOAD_CONFIG`
+
+### Fixed
+- Race condition — clear vs in-flight submit (generation counter guards stale responses)
+- Race condition — `saveEntry` TOCTOU (write queue serializes history writes)
+- Race condition — stale event listeners in `handleClear` (`clearListeners()` before `destroySession`)
+- Race condition — stale `initSession` (guarded by generation check)
+- `promptTimeout` leaked on error — now cleared
+- Reactive widths in SideChat — `contentWidth`/`panelWidth` use `createMemo` instead of `const`
+- HistoryDetail theme reactivity — `props.theme` used directly instead of captured const
+- `getErrorMessage` handles string throws (not just Error objects)
+- Async `mkdir` in history.ts — was using sync `fs.mkdirSync` in async functions
+- Panel click focuses real input — was overwriting overlayInput with mock object
+- Enter key blocked on main prompt — Enter binding removed from panel-visible layer
+- HistoryList `<Show>` wrapping for reactive click-to-select — top-level `if` ran only once
+
+### Changed
+- SideChat.tsx reduced from 513 to 246 lines — extracted 5 sub-components: ChatTranscript, HistoryList, ChatInput, StatusBar, Helpers
+- State management consolidated — 11 ad-hoc signals into single `createStore` in index.tsx
+- All 6 keybinds now documented in default config comment; omitted from generated output (defaults from constants)
+- Config position validated against whitelist — invalid values fall back to `"bottom-right"`
+- `transcriptHeight` dead config option removed
+- `getToolEmoji`, `getStatusIcon`, `formatDuration` moved to module level as pure functions
+
+### Config
+- New keybinds: `historyKeybind` (default `Alt+H`), `deleteKeybind` (default `Alt+D`), `modelKeybind` (default `Alt+M`)
+- New palette command: `/side-reload` for config hot-reload
+
 ## [1.2.1] — 2026-05-20
 
 ### Fixed

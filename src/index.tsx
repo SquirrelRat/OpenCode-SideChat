@@ -1,6 +1,7 @@
 /** @jsxImportSource @opentui/solid */
 import type { TuiPlugin, TuiPluginModule } from "@opencode-ai/plugin/tui";
 import { createSignal, Show, ErrorBoundary } from "solid-js";
+import { createStore } from "solid-js/store";
 import { loadConfig } from "./config";
 import { SideChat } from "./components/SideChat";
 import {
@@ -10,9 +11,11 @@ import {
   CMD_TOGGLE_THINK,
   CMD_TOGGLE_HISTORY,
   CMD_DELETE,
-  DEFAULT_HISTORY_KEYBIND,
-  DEFAULT_DELETE_KEYBIND,
-  DEFAULT_POSITION,
+  CMD_STOP,
+  CMD_HISTORY_UP,
+  CMD_HISTORY_DOWN,
+  CMD_HISTORY_SELECT,
+  CMD_RELOAD_CONFIG,
   PLUGIN_ID,
 } from "./constants";
 import { loadHistory, saveEntry, deleteEntry, buildHistoryEntry } from "./history";
@@ -32,27 +35,30 @@ import type { SideDialogState, ModelPreference, HistoryEntry } from "./types";
 const PROMPT_TIMEOUT_MS = 120_000;
 
 const tui: TuiPlugin = async (api, _options) => {
-  const config = loadConfig();
-  const keybind = config.keybind;
-  const clearKeybind = config.clearKeybind;
-  const thinkToggleKeybind = config.thinkToggleKeybind;
+  const [config, setConfig] = createSignal(loadConfig());
+  const keybind = config().keybind;
+  const clearKeybind = config().clearKeybind;
+  const thinkToggleKeybind = config().thinkToggleKeybind;
+  const historyKeybind = config().historyKeybind;
+  const deleteKeybind = config().deleteKeybind;
+  const modelKeybind = config().modelKeybind;
 
-  const [state, setState] = createSignal<SideDialogState>({
-    entries: [],
+  const [store, setStore] = createStore({
+    entries: [] as SideDialogState["entries"],
     loading: false,
-    error: undefined,
+    error: undefined as string | undefined,
     tokenCount: 0,
+    streamingAnswer: "",
+    tempSessionID: undefined as string | undefined,
+    selectedModel: undefined as ModelPreference,
+    visible: false,
+    thinkCollapsed: config().think.defaultState === "collapsed",
+    historyMode: false,
+    historyEntries: [] as HistoryEntry[],
+    selectedHistoryId: undefined as string | undefined,
+    deleteConfirmPending: false,
+    focusedHistoryIndex: -1,
   });
-  const [streamingAnswer, setStreamingAnswer] = createSignal("", { equals: false });
-
-  const [tempSessionID, setTempSessionID] = createSignal<string | undefined>(undefined);
-  const [selectedModel, setSelectedModel] = createSignal<ModelPreference>(undefined);
-  const [visible, setVisible] = createSignal(false);
-  const [thinkCollapsed, setThinkCollapsed] = createSignal(config.think.defaultState === "collapsed");
-
-  const [historyMode, setHistoryMode] = createSignal(false);
-  const [historyEntries, setHistoryEntries] = createSignal<HistoryEntry[]>([]);
-  const [selectedHistoryId, setSelectedHistoryId] = createSignal<string | undefined>(undefined);
 
   let overlayInput: { focus: () => void } | undefined;
   let previousFocus: import("@opentui/core").Renderable | null = null;
@@ -64,10 +70,11 @@ const tui: TuiPlugin = async (api, _options) => {
   let cachedPromptResult:
     | { system: string; tools: Record<string, boolean>; permission: any[] }
     | undefined;
+  let generation = 0;
 
   const getModelName = () =>
     formatPreference(
-      selectedModel() ?? resolveModel(config.model, state().entries, api).model,
+      store.selectedModel ?? resolveModel(config().model, store.entries, api).model,
     );
 
   const clearListeners = () => {
@@ -77,7 +84,7 @@ const tui: TuiPlugin = async (api, _options) => {
   };
 
   const refreshSession = () => {
-    const sid = tempSessionID();
+    const sid = store.tempSessionID;
     if (!sid) return;
     try {
       const messages = api.state.session.messages(sid);
@@ -90,7 +97,7 @@ const tui: TuiPlugin = async (api, _options) => {
         }
       }
       const MAX_STORED_ENTRIES = 100;
-      setState((s) => ({ ...s, entries: entries.slice(-MAX_STORED_ENTRIES), tokenCount }));
+      setStore({ entries: entries.slice(-MAX_STORED_ENTRIES), tokenCount });
     } catch (err) {
       console.error("[SideChat] refreshSession failed:", err);
     }
@@ -101,9 +108,9 @@ const tui: TuiPlugin = async (api, _options) => {
       cachedToolIDs = await getAvailableToolIDs(api);
     }
     const toolIDs = cachedToolIDs;
-    const resolvedTools = resolveAllowedTools(config.allowedTools, toolIDs);
+    const resolvedTools = resolveAllowedTools(config().allowedTools, toolIDs);
     const result = {
-      system: buildSideSystemPrompt(config.systemPrompt, resolvedTools),
+      system: buildSideSystemPrompt(config().systemPrompt, resolvedTools),
       toolIDs,
       resolvedTools,
       tools: buildToolSelection(toolIDs, resolvedTools),
@@ -129,18 +136,18 @@ const tui: TuiPlugin = async (api, _options) => {
       );
 
       const sid = created.data.id;
-      setTempSessionID(sid);
+      const myGen = generation;
+      // Guard: don't set session ID if a clear happened during init
+      if (myGen !== generation) return undefined;
+      setStore("tempSessionID", sid);
 
       unsubscribers.push(
         api.event.on("session.idle", (event) => {
           if (event.properties.sessionID !== sid) return;
           if (promptTimeout) { clearTimeout(promptTimeout); promptTimeout = undefined; }
           refreshSession();
-          setState((s) => ({
-            ...s,
-            loading: false,
-          }));
-          setStreamingAnswer("");
+          setStore("loading", false);
+          setStore("streamingAnswer", "");
         }),
       );
 
@@ -156,9 +163,9 @@ const tui: TuiPlugin = async (api, _options) => {
           if (
             event.properties.sessionID !== sid ||
             event.properties.field !== "text" ||
-            !state().loading
+            !store.loading
           ) return;
-          setStreamingAnswer((prev) => prev + event.properties.delta);
+          setStore("streamingAnswer", (prev) => prev + event.properties.delta);
         }),
       );
 
@@ -173,34 +180,30 @@ const tui: TuiPlugin = async (api, _options) => {
         api.event.on("session.error", (event) => {
           if (event.properties.sessionID !== sid) return;
           if (promptTimeout) { clearTimeout(promptTimeout); promptTimeout = undefined; }
-          setState((s) => ({
-            ...s,
-            error: getErrorMessage(event.properties.error),
-            loading: false,
-          }));
+          setStore({error: getErrorMessage(event.properties.error), loading: false});
         }),
       );
 
-      setState((s) => ({ ...s, error: undefined }));
+      setStore("error", undefined);
       return sid;
     } catch (cause) {
       const msg = getErrorMessage(cause);
-      setState((s) => ({ ...s, error: msg }));
+      setStore("error", msg);
       sessionInitPromise = undefined;
       return undefined;
     }
   };
 
   const ensureSession = (): Promise<string | undefined> => {
-    if (tempSessionID()) return Promise.resolve(tempSessionID());
+    if (store.tempSessionID) return Promise.resolve(store.tempSessionID);
     if (!sessionInitPromise) sessionInitPromise = initSession();
     return sessionInitPromise;
   };
 
   const destroySession = async () => {
-    const sid = tempSessionID();
+    const sid = store.tempSessionID;
     if (!sid) return;
-    setTempSessionID(undefined);
+    setStore("tempSessionID", undefined);
     sessionInitPromise = undefined;
     clearListeners();
     try {
@@ -212,42 +215,41 @@ const tui: TuiPlugin = async (api, _options) => {
     try {
       await api.client.session.delete(
         { sessionID: sid },
-        { throwOnError: true },
       );
-    } catch (err) { console.error("[SideChat] session delete:", err); }
+    } catch {
+      // Session may already be gone after abort — expected
+    }
   };
 
   const handleSubmit = (text: string): boolean => {
-    if (state().loading) return false;
+    if (store.loading) return false;
 
-    setState((s) => ({
-      ...s,
-      error: undefined,
-      loading: true,
-    }));
-    setStreamingAnswer("");
+    const myGen = generation;
+
+    setStore({error: undefined, loading: true});
+    setStore("streamingAnswer", "");
 
     if (promptTimeout) clearTimeout(promptTimeout);
     promptTimeout = setTimeout(() => {
-      setState((s) => s.loading ? { ...s, loading: false, error: "Request timed out." } : s);
+      if (generation !== myGen) return;
+      if (store.loading) setStore({loading: false, error: "Request timed out."});
     }, PROMPT_TIMEOUT_MS);
 
     void ensureSession().then((sid) => {
+      if (generation !== myGen) return;
       if (!sid) {
-        setState((s) => ({
-          ...s,
-          error: "Failed to create session.",
-          loading: false,
-        }));
+        setStore({error: "Failed to create session.", loading: false});
+        if (promptTimeout) { clearTimeout(promptTimeout); promptTimeout = undefined; }
         return;
       }
 
       void (async () => {
         try {
           const { system, tools } = cachedPromptResult ?? await buildSystemPrompt();
+          if (generation !== myGen) return;
           const resolved =
-            selectedModel() ??
-            resolveModel(config.model, state().entries, api).model;
+            store.selectedModel ??
+            resolveModel(config().model, store.entries, api).model;
 
           await api.client.session.promptAsync(
             {
@@ -261,11 +263,9 @@ const tui: TuiPlugin = async (api, _options) => {
             { throwOnError: true },
           );
         } catch (cause) {
-          setState((s) => ({
-            ...s,
-            error: getErrorMessage(cause),
-            loading: false,
-          }));
+          if (generation !== myGen) return;
+          if (promptTimeout) { clearTimeout(promptTimeout); promptTimeout = undefined; }
+          setStore({error: getErrorMessage(cause), loading: false});
         }
       })();
     });
@@ -276,23 +276,25 @@ const tui: TuiPlugin = async (api, _options) => {
   const handleClear = async () => {
     if (clearing) return;
     clearing = true;
+    generation++;
+    clearListeners();
+    if (promptTimeout) { clearTimeout(promptTimeout); promptTimeout = undefined; }
     try {
-      const entry = buildHistoryEntry(state(), getModelName());
+      const entry = buildHistoryEntry(store, getModelName());
       if (entry) await saveEntry(entry);
       await destroySession();
-      setState({
+      setStore({
         entries: [],
         loading: false,
         error: undefined,
         tokenCount: 0,
       });
-      setStreamingAnswer("");
+      setStore("streamingAnswer", "");
       sessionInitPromise = undefined;
       cachedToolIDs = undefined;
       cachedPromptResult = undefined;
-      setThinkCollapsed(config.think.defaultState === "collapsed");
-      await ensureSession();
-      if (visible()) {
+      setStore("thinkCollapsed", config().think.defaultState === "collapsed");
+      if (store.visible) {
         setTimeout(() => overlayInput?.focus(), 0);
       }
     } finally {
@@ -302,14 +304,14 @@ const tui: TuiPlugin = async (api, _options) => {
 
   const handleToggle = async () => {
     const currentRoute = api.route.current;
-    if (currentRoute.name !== "session" && !visible()) return;
-    const wasVisible = visible();
+    if (currentRoute.name !== "session" && !store.visible) return;
+    const wasVisible = store.visible;
     if (!wasVisible) {
       previousFocus = api.renderer.currentFocusedRenderable;
     }
-    setVisible(!wasVisible);
-    if (wasVisible && state().entries.length > 0) {
-      const entry = buildHistoryEntry(state(), getModelName());
+    setStore("visible", !wasVisible);
+    if (wasVisible && store.entries.length > 0) {
+      const entry = buildHistoryEntry(store, getModelName());
       if (entry) await saveEntry(entry);
     }
     if (wasVisible && previousFocus) {
@@ -324,41 +326,94 @@ const tui: TuiPlugin = async (api, _options) => {
   };
 
   const handleToggleThink = () => {
-    setThinkCollapsed((prev) => !prev);
+    setStore("thinkCollapsed", (prev) => !prev);
   };
 
   const handleToggleHistory = async () => {
-    const next = !historyMode();
+    const next = !store.historyMode;
     if (next) {
-      setHistoryEntries(await loadHistory());
-      setSelectedHistoryId(undefined);
+      setStore("historyEntries", await loadHistory());
+      setStore("selectedHistoryId", undefined);
+      // Auto-show overlay if entering history mode from palette while hidden
+      if (!store.visible) setStore("visible", true);
+    } else {
+      // Restore focus to input when exiting history mode
+      setTimeout(() => overlayInput?.focus(), 50);
     }
-    setHistoryMode(next);
+    setStore("historyMode", next);
   };
 
   const handleSelectHistoryEntry = (id: string | undefined) => {
-    setSelectedHistoryId(id);
+    setStore("selectedHistoryId", id);
   };
 
   const handleDeleteHistoryEntry = async (id: string) => {
+    if (!store.deleteConfirmPending) {
+      setStore("deleteConfirmPending", true);
+      setTimeout(() => setStore("deleteConfirmPending", false), 3000);
+      return;
+    }
+    setStore("deleteConfirmPending", false);
     await deleteEntry(id);
-    setHistoryEntries(await loadHistory());
-    if (selectedHistoryId() === id) {
-      setSelectedHistoryId(undefined);
+    setStore("historyEntries", await loadHistory());
+    setStore("focusedHistoryIndex", -1);
+    if (store.selectedHistoryId === id) {
+      setStore("selectedHistoryId", undefined);
+    }
+  };
+
+  const handleStopGeneration = async () => {
+    if (!store.loading) return;
+    const sid = store.tempSessionID;
+    if (!sid) return;
+    try {
+      await api.client.session.abort({ sessionID: sid }, { throwOnError: true });
+    } catch (err) { console.error("[SideChat] stop generation:", err); }
+    setStore("loading", false);
+    setStore("streamingAnswer", "");
+  };
+
+  const handleHistoryUp = () => {
+    const entries = store.historyEntries;
+    if (entries.length === 0) return;
+    setStore("focusedHistoryIndex", (prev) => {
+      if (prev <= 0) return entries.length - 1; // wrap to bottom
+      return prev - 1;
+    });
+  };
+
+  const handleHistoryDown = () => {
+    const entries = store.historyEntries;
+    if (entries.length === 0) return;
+    setStore("focusedHistoryIndex", (prev) => {
+      if (prev < 0 || prev >= entries.length - 1) return 0; // wrap to top
+      return prev + 1;
+    });
+  };
+
+  const handleReloadConfig = () => {
+    try {
+      setConfig(loadConfig());
+      // Clear caches so next prompt rebuilds system prompt/tools
+      cachedToolIDs = undefined;
+      cachedPromptResult = undefined;
+      api.ui.toast({ variant: "success", message: "SideChat config reloaded." });
+    } catch (err) {
+      api.ui.toast({ variant: "error", message: "SideChat config reload failed." });
     }
   };
 
   const handleChangeModel = () => {
     const currentRoute = api.route.current;
     if (currentRoute.name !== "session") return;
-    openModelPicker(api, config, selectedModel(), (model) => {
-      setSelectedModel(model);
+    openModelPicker(api, config(), store.selectedModel, (model) => {
+      setStore("selectedModel", model);
     });
   };
 
   api.lifecycle.onDispose(async () => {
     clearListeners();
-    const entry = buildHistoryEntry(state(), getModelName());
+    const entry = buildHistoryEntry(store, getModelName());
     if (entry) await saveEntry(entry);
     void destroySession();
   });
@@ -366,32 +421,35 @@ const tui: TuiPlugin = async (api, _options) => {
   api.slots.register({
     slots: {
       app: () => (
-        <Show when={visible()}>
+        <Show when={store.visible}>
           <ErrorBoundary fallback={(err) => <text>{String(err)}</text>}>
             <SideChat
               api={api}
               modelName={getModelName()}
-              state={state()}
-              streamingAnswer={streamingAnswer()}
-              width={config.width}
-              transcriptHeight={config.transcriptHeight}
-              tokenLimit={config.tokenLimit}
-              thinkCollapsed={thinkCollapsed()}
-              thinkConfig={config.think}
-              keybind={config.keybind}
-              clearKeybind={config.clearKeybind}
-              thinkToggleKeybind={config.thinkToggleKeybind}
-              historyKeybind={DEFAULT_HISTORY_KEYBIND}
-              deleteKeybind={DEFAULT_DELETE_KEYBIND}
-              position={config.position}
+              state={store}
+              streamingAnswer={store.streamingAnswer}
+              width={config().width}
+              tokenLimit={config().tokenLimit}
+              thinkCollapsed={store.thinkCollapsed}
+              thinkConfig={config().think}
+              keybind={config().keybind}
+              clearKeybind={config().clearKeybind}
+              thinkToggleKeybind={config().thinkToggleKeybind}
+              historyKeybind={config().historyKeybind}
+              deleteKeybind={config().deleteKeybind}
+              modelKeybind={config().modelKeybind}
+              deleteConfirmPending={store.deleteConfirmPending}
+              onStopGeneration={handleStopGeneration}
+              focusedHistoryIndex={store.focusedHistoryIndex}
+              position={config().position}
               onInput={(node) => { overlayInput = node; }}
               onChangeModel={handleChangeModel}
               onSubmit={handleSubmit}
               onClear={() => void handleClear()}
               onToggleThink={handleToggleThink}
-              historyMode={historyMode()}
-              historyEntries={historyEntries()}
-              selectedHistoryId={selectedHistoryId()}
+              historyMode={store.historyMode}
+              historyEntries={store.historyEntries}
+              selectedHistoryId={store.selectedHistoryId}
               onToggleHistory={handleToggleHistory}
               onSelectHistoryEntry={handleSelectHistoryEntry}
               onDeleteHistoryEntry={handleDeleteHistoryEntry}
@@ -411,7 +469,7 @@ const tui: TuiPlugin = async (api, _options) => {
         desc: "Open/side chat overlay",
         category: "Plugin",
         slashName: "side",
-        enabled: () => api.route.current.name === "session" || visible(),
+        enabled: () => api.route.current.name === "session" || store.visible,
         run: () => handleToggle(),
       },
       {
@@ -441,8 +499,18 @@ const tui: TuiPlugin = async (api, _options) => {
         desc: "View side chat history",
         category: "Plugin",
         slashName: "side-history",
-        enabled: () => api.route.current.name === "session" || visible(),
+        enabled: () => api.route.current.name === "session" || store.visible,
         run: () => handleToggleHistory(),
+      },
+      {
+        namespace: "palette",
+        name: CMD_RELOAD_CONFIG,
+        title: "side reload",
+        desc: "Reload side chat configuration",
+        category: "Plugin",
+        slashName: "side-reload",
+        enabled: () => api.route.current.name === "session",
+        run: () => handleReloadConfig(),
       },
     ],
     bindings: [
@@ -453,23 +521,28 @@ const tui: TuiPlugin = async (api, _options) => {
             desc: "Toggle side chat",
           }]
         : []),
-      {
-        key: DEFAULT_HISTORY_KEYBIND,
-        cmd: CMD_TOGGLE_HISTORY,
-        desc: "Toggle side chat history",
-      },
+      ...(historyKeybind !== false
+        ? [{
+            key: historyKeybind,
+            cmd: CMD_TOGGLE_HISTORY,
+            desc: "Toggle side chat history",
+          }]
+        : []),
     ],
   });
 
   api.keymap.registerLayer({
     priority: 1000,
-    enabled: () => visible(),
+    enabled: () => store.visible,
     commands: [
       { name: CMD_CLEAR, run: () => void handleClear() },
       { name: CMD_CHANGE_MODEL, run: () => handleChangeModel() },
       { name: CMD_TOGGLE_THINK, run: () => handleToggleThink() },
       { name: CMD_TOGGLE_HISTORY, run: () => handleToggleHistory() },
-      { name: CMD_DELETE, run: () => { if (selectedHistoryId()) handleDeleteHistoryEntry(selectedHistoryId()!); } },
+      { name: CMD_DELETE, run: () => { if (store.selectedHistoryId) handleDeleteHistoryEntry(store.selectedHistoryId); } },
+      { name: CMD_HISTORY_UP, run: () => { if (store.historyMode) handleHistoryUp(); } },
+      { name: CMD_HISTORY_DOWN, run: () => { if (store.historyMode) handleHistoryDown(); } },
+
     ],
     bindings: [
       ...(clearKeybind !== false
@@ -478,14 +551,52 @@ const tui: TuiPlugin = async (api, _options) => {
       ...(thinkToggleKeybind !== false
         ? [{ key: thinkToggleKeybind, cmd: CMD_TOGGLE_THINK }]
         : []),
-      { key: "tab", cmd: CMD_CHANGE_MODEL },
-      {
-        key: DEFAULT_DELETE_KEYBIND,
-        cmd: CMD_DELETE,
-        desc: "Delete history entry",
-      },
+      ...(modelKeybind !== false
+        ? [{ key: modelKeybind, cmd: CMD_CHANGE_MODEL }]
+        : []),
+      ...(deleteKeybind !== false
+        ? [{
+            key: deleteKeybind,
+            cmd: CMD_DELETE,
+            desc: "Delete history entry",
+          }]
+        : []),
+      { key: "up", cmd: CMD_HISTORY_UP },
+      { key: "down", cmd: CMD_HISTORY_DOWN },
     ],
   });
+
+  api.keymap.registerLayer({
+    priority: 1000,
+    enabled: () => store.visible && store.loading,
+    commands: [
+      { name: CMD_STOP, run: () => handleStopGeneration() },
+    ],
+    bindings: [
+      { key: "escape", cmd: CMD_STOP },
+    ],
+  });
+
+  api.keymap.registerLayer({
+    priority: 1000,
+    enabled: () => store.visible && store.historyMode,
+    commands: [
+      { name: CMD_HISTORY_SELECT, run: () => {
+          const idx = store.focusedHistoryIndex;
+          if (idx < 0) return;
+          const entries = store.historyEntries;
+          if (idx >= entries.length) return;
+          setStore("selectedHistoryId", entries[idx].id);
+        }
+      },
+    ],
+    bindings: [
+      { key: "space", cmd: CMD_HISTORY_SELECT },
+      { key: "enter", cmd: CMD_HISTORY_SELECT },
+    ],
+  });
+
+
 };
 
 const plugin: TuiPluginModule & { id: string } = {

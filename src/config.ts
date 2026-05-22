@@ -7,12 +7,16 @@ import {
   DEFAULT_KEYBIND,
   DEFAULT_CLEAR_KEYBIND,
   DEFAULT_THINK_TOGGLE_KEYBIND,
+  DEFAULT_HISTORY_KEYBIND,
+  DEFAULT_DELETE_KEYBIND,
+  DEFAULT_MODEL_KEYBIND,
   DEFAULT_WIDTH,
-  DEFAULT_TRANSCRIPT_HEIGHT,
   DEFAULT_POSITION,
   DEFAULT_SYSTEM_PROMPT,
 } from "./constants";
 import type { SideConfig, ThinkConfig } from "./types";
+
+const VALID_POSITIONS = new Set(["bottom-right", "bottom-left", "top-right", "top-left"]);
 
 const CONFIG_FILENAME = "sidechat.jsonc";
 
@@ -110,14 +114,12 @@ function generateDefaultConfig(): string {
   const defaultAllowedTools = JSON.stringify(DEFAULT_ALLOWED_TOOLS);
   return `{
   // OpenCode SideChat Configuration
+  // Keybinds default: ${DEFAULT_KEYBIND} (toggle), ${DEFAULT_CLEAR_KEYBIND} (clear), ${DEFAULT_THINK_TOGGLE_KEYBIND} (think), ${DEFAULT_HISTORY_KEYBIND} (history), ${DEFAULT_DELETE_KEYBIND} (delete), ${DEFAULT_MODEL_KEYBIND} (model)
+  // Override any keybind by adding it here (e.g. "keybind": "ctrl+s"). Set to "none" to disable.
   "model": null,
   "systemPrompt": ${JSON.stringify(DEFAULT_SYSTEM_PROMPT)},
-  "keybind": "alt+n",
-  "clearKeybind": "alt+c",
-  "thinkToggleKeybind": "alt+t",
   "allowedTools": ${defaultAllowedTools},
   "width": ${DEFAULT_WIDTH},
-  "transcriptHeight": ${DEFAULT_TRANSCRIPT_HEIGHT},
   "tokenLimit": ${DEFAULT_TOKEN_LIMIT},
   "think": {
     "defaultState": "collapsed",
@@ -159,10 +161,12 @@ export function loadConfig(): SideConfig {
     keybind: parseKeybind(raw.keybind, DEFAULT_KEYBIND),
     clearKeybind: parseKeybind(raw.clearKeybind, DEFAULT_CLEAR_KEYBIND),
     thinkToggleKeybind: parseKeybind(raw.thinkToggleKeybind, DEFAULT_THINK_TOGGLE_KEYBIND),
+    historyKeybind: parseKeybind(raw.historyKeybind, DEFAULT_HISTORY_KEYBIND),
+    deleteKeybind: parseKeybind(raw.deleteKeybind, DEFAULT_DELETE_KEYBIND),
+    modelKeybind: parseKeybind(raw.modelKeybind, DEFAULT_MODEL_KEYBIND),
     allowedTools: parseAllowedTools(raw.allowedTools),
     width: parsePositiveNumber(raw.width, DEFAULT_WIDTH),
-    transcriptHeight: parsePositiveNumber(raw.transcriptHeight, DEFAULT_TRANSCRIPT_HEIGHT),
-    position: parseString(raw.position, DEFAULT_POSITION),
+    position: parsePosition(raw.position),
     think: parseThinkConfig(raw.think),
   };
 }
@@ -184,6 +188,11 @@ function parsePositiveNumber(value: unknown, fallback: number) {
 function parseKeybind(value: unknown, fallback: string): string | false {
   if (value === false || value === "none") return false;
   return typeof value === "string" && value.trim() ? value.trim() : fallback;
+}
+
+function parsePosition(value: unknown): string {
+  if (typeof value === "string" && VALID_POSITIONS.has(value.trim())) return value.trim();
+  return DEFAULT_POSITION;
 }
 
 function parseAllowedTools(value: unknown): string[] | null {

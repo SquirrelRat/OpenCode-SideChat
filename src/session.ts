@@ -252,6 +252,7 @@ function buildModelOptions(
 
 export function getErrorMessage(cause: unknown): string {
   if (cause instanceof Error && cause.message) return cause.message;
+  if (typeof cause === "string" && cause) return cause;
   if (cause && typeof cause === "object") {
     const data = "data" in cause
       ? (cause as { data?: { message?: unknown } }).data

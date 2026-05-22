@@ -76,8 +76,6 @@ export function renderInlineMarkdown(text: string): InlinePart[] {
 }
 
 export function RenderMarkdown(props: { text: string; theme: import("@opencode-ai/plugin/tui").TuiThemeCurrent }) {
-  const t = props.theme;
-
   const lines = createMemo((): RenderBlock[] => {
     const text = props.text;
     const result: RenderBlock[] = [];
@@ -136,11 +134,11 @@ export function RenderMarkdown(props: { text: string; theme: import("@opencode-a
         if (block.type === "codeblock") {
           return (
             <box
-              backgroundColor={t.backgroundElement}
+              backgroundColor={props.theme.backgroundElement}
               paddingLeft={1}
               paddingRight={1}
             >
-              <text fg={t.markdownCodeBlock}>{block.codeText}</text>
+              <text fg={props.theme.markdownCodeBlock}>{block.codeText}</text>
             </box>
           );
         }
@@ -148,19 +146,19 @@ export function RenderMarkdown(props: { text: string; theme: import("@opencode-a
         const s = block.style;
         let textColor: import("@opentui/core").RGBA;
         if (s === "heading") {
-          textColor = t.markdownHeading;
+          textColor = props.theme.markdownHeading;
         } else if (s === "blockquote") {
-          textColor = t.markdownBlockQuote;
+          textColor = props.theme.markdownBlockQuote;
         } else if (s === "listitem") {
-          textColor = t.markdownListItem;
+          textColor = props.theme.markdownListItem;
         } else if (s === "hr") {
-          textColor = t.markdownHorizontalRule;
+          textColor = props.theme.markdownHorizontalRule;
         } else {
-          textColor = t.markdownText;
+          textColor = props.theme.markdownText;
         }
 
         if (s === "hr") {
-          return <text fg={t.markdownHorizontalRule}>{"―".repeat(8)}</text>;
+          return <text fg={props.theme.markdownHorizontalRule}>{"―".repeat(8)}</text>;
         }
 
         // Render inline parts with appropriate colors
@@ -170,15 +168,15 @@ export function RenderMarkdown(props: { text: string; theme: import("@opencode-a
               {(part) => {
                 switch (part.type) {
                   case "bold":
-                    return <text fg={t.markdownStrong}><b>{part.text}</b></text>;
+                    return <text fg={props.theme.markdownStrong}><b>{part.text}</b></text>;
                   case "italic":
-                    return <text fg={t.markdownEmph}><i>{part.text}</i></text>;
+                    return <text fg={props.theme.markdownEmph}><i>{part.text}</i></text>;
                   case "code":
-                    return <text fg={t.markdownCode}>{part.text}</text>;
+                    return <text fg={props.theme.markdownCode}>{part.text}</text>;
                   case "link":
                     return (
-                      <text fg={t.markdownLinkText}>
-                        {part.text}<text fg={t.markdownLink}>{"(" + part.url + ")"}</text>
+                      <text fg={props.theme.markdownLinkText}>
+                        {part.text}<text fg={props.theme.markdownLink}>{"(" + part.url + ")"}</text>
                       </text>
                     );
                   default:

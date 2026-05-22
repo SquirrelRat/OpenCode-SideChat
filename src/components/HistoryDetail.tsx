@@ -24,35 +24,34 @@ export function RenderHistoryDetail(props: {
   thinkConfig: ThinkConfig;
   renderThinking: (r: { id: string; text: string }) => JSX.Element;
 }) {
-  const t = props.theme;
-  if (!props.entry) return <text fg={t.textMuted}>{"Conversation not found."}</text>;
+  if (!props.entry) return <text fg={props.theme.textMuted}>{"Conversation not found."}</text>;
 
   const title = props.entry.title.slice(0, 60);
 
   return (
     <box flexDirection="column" gap={0}>
-      <text fg={t.secondary}>
+      <text fg={props.theme.secondary}>
         <b>{title}</b>
       </text>
-      <text fg={t.textMuted}>
+      <text fg={props.theme.textMuted}>
         {props.entry.model} · {formatTime(props.entry.created)}
       </text>
       <box flexDirection="column" gap={1} paddingTop={1}>
         <For each={props.entry.messages}>
           {(msg) => (
             <box flexDirection="column" gap={0}>
-              <text fg={msg.role === "assistant" ? t.secondary : t.text}>
+              <text fg={msg.role === "assistant" ? props.theme.secondary : props.theme.text}>
                 <b>{msg.role === "assistant" ? "Agent:" : "You:"}</b>
               </text>
               {msg.reasoning?.map((r) => props.renderThinking(r))}
               {msg.tools?.map((tc) => (
-                <text fg={t.textMuted}>
+                <text fg={props.theme.textMuted}>
                   {`📁 ${tc.tool} ${tc.status === "completed" ? "✅" : "❌"}`}
                 </text>
               ))}
               {msg.text ? (
                 <box flexDirection="column">
-                  <RenderMarkdown text={msg.text} theme={t} />
+                  <RenderMarkdown text={msg.text} theme={props.theme} />
                 </box>
               ) : (
                 <text>{"\u00A0"}</text>
